@@ -2,13 +2,52 @@ from flask import Flask, request, jsonify, make_response
 from pymongo import MongoClient
 from bson import ObjectId
 import string
+import jwt
+import datetime
+from functools import wraps
+import bcrypt 
 
+def jwt_required(func):
+    @wraps(func)
+    def jwt_required_wrapper(*args, **kwargs):
+        token = None
+        if 'x-access-token' in request.headers:
+            token = request.headers['x-access-token']
+        if not token:
+            return jsonify({'message': 'Token is missing'}), 401
+        try:
+            data = jwt.decode(token, app.config['SECRET_KEY'])
+        except:
+            return jsonify({'message': 'Token is invalid'}), 401
+        
+        bl_token = blacklist.find_one({"token" : token})
+        if bl_token is not None:
+            return make_response(jsonify({'message': 'Token has been cancelled'}), 401)
+        return func(*args, **kwargs)
+    
+    return jwt_required_wrapper
+
+def admin_required(func):
+    @wraps(func)
+    def admin_required_wrapper(*args, **kwargs):
+        token = request.headers['x-access-token']
+        data = jwt.decode(token, app.config['SECRET_KEY'])
+        if data["admin"]:
+            return func(*args, **kwargs)
+        else:
+            return make_response(jsonify({'message': 'Admin access is required'}), 401)
+    return admin_required_wrapper
+            
 app = Flask(__name__)
+
+app.config['SECRET_KEY'] = 'b00785513'
 
 #establishing connections between webapp and mongodb
 client = MongoClient("mongodb://127.0.0.1:27017")
 db = client.bizDB
 businesses = db.biz
+users = db.users
+blacklist = db.blacklist
 
 #creating pagination for data within dataset
 @app.route("/api/v1.0/businesses", methods=["GET"])
@@ -33,6 +72,7 @@ def show_all_businesses():
 
 #creating GET endpoint for our REST api
 @app.route("/api/v1.0/businesses/<string:id>", methods = ["GET"])
+@jwt_required
 def show_one_business(id):
     #validating whetehr business ID is valid
     if len(id) != 24 or not all(c in string.hexdigits for c in id):
@@ -48,6 +88,7 @@ def show_one_business(id):
 
 #creating POST endpoint for our REST api
 @app.route("/api/v1.0/businesses/", methods = ["POST"])
+@jwt_required
 def add_new_business():
     if len(id) != 24 or not all(c in string.hexdigits for c in id):
         return make_response(jsonify({"error" : "Invalid Business ID"}), 404)
@@ -69,6 +110,7 @@ def add_new_business():
         return make_response(jsonify({"error" : "Missing form data"}), 404)
     
 @app.route("/api/v1.0/businesses/<string:id>", methods = ["PUT"])
+@jwt_required
 def edit_business(id):
     if len(id) != 24 or not all(c in string.hexdigits for c in id):
         return make_response(jsonify({"error" : "Invalid Business ID"}), 404)
@@ -96,6 +138,8 @@ def edit_business(id):
         return make_response(jsonify({"error" : "Missing form data"}), 404)
     
 @app.route("/api/v1.0/businesses/<string:id>", methods = ["DELETE"])
+@jwt_required
+@admin_required
 def delete_business(id):
     if len(id) != 24 or not all(c in string.hexdigits for c in id):
         return make_response(jsonify({"error" : "Invalid Business ID"}), 404)
@@ -107,6 +151,7 @@ def delete_business(id):
         return make_response(jsonify({"error" : "Invalid business ID"}), 404)
     
 @app.route("/api/v1.0/businesses/<string:id>/reviews", methods = ["POST"])
+@jwt_required
 def add_new_review(id):
     #new_review defines schema used for review form data
     new_review = {
@@ -140,6 +185,7 @@ def fetch_all_reviews(id):
     return make_response( jsonify( data_to_return ), 200)
 
 @app.route("/api/v1.0/businesses/<string:id>/reviews/<string:review_id>", methods = ["GET"])
+@jwt_required
 def fetch_one_review(id, review_id):
     business = businesses.find_one(
         #we specifcy we only want the review returned, and we add the positional opertator $ that says the
@@ -154,6 +200,7 @@ def fetch_one_review(id, review_id):
         return make_response( jsonify(business["reviews"][0]), 200)
     
 @app.route("/api/v1.0/businesses/<string:id>/reviews/<string:review_id>", methods = ["PUT"])
+@jwt_required
 def edit_review(id, review_id):
     #using $ positonal operator again as it poitns to the single review that matches the ID given, so we onyl update that one review
     edited_review = {
@@ -171,6 +218,8 @@ def edit_review(id, review_id):
     return make_response( jsonify({"url" : edit_review_url}), 200)
 
 @app.route("/api/v1.0/businesses/<string:id>/reviews/<string:review_id>", methods = ["DELETE"])
+@jwt_required
+@admin_required
 def delete_review(id, review_id):
     #we again update one business using the same ID found in the url
     #pull command to pull from reviews collection the review with the corresponding ID found in the url
@@ -179,6 +228,34 @@ def delete_review(id, review_id):
         {"$pull" : {"reviews" : { "_id" : ObjectId(review_id) } } }
     )
     return make_response( jsonify( {} ), 204)
+
+@app.route("/api/v1.0/login", methods = ["GET"])
+def login():
+    auth = request.authorization
+    if auth:
+        user = users.find_one({"username" : auth.username})
+        if user is not None:
+            if bcrypt.checkpw(bytes(auth.password, 'UTF-8'), user["password"]):      
+                token = jwt.encode({
+                    'user' : auth.username,
+                    'admin' : user["admin"],
+                    'exp' : datetime.datetime.utcnow() + datetime.timedelta(minutes=30)
+                }, app.config['SECRET_KEY'])
+                return make_response(jsonify({'token' : token.decode('UTF-8') }), 200)
+            else:
+                return make_response(jsonify({'message' : 'Bad Password'}), 401)
+        else:
+            return make_response(jsonify({'message' : 'Bad Username'}), 401)
+        
+    return make_response(jsonify({'message' : 'Authentication is required'}), 401)
+
+@app.route("/api/v1.0/logout", methods=["GET"])
+@jwt_required
+def logout():
+    token = request.headers['x-access-token']
+    blacklist.insert_one({"token": token})
+    return make_response(jsonify({'message' : 'Logout Successful!'}), 200)
+
 
 if __name__ == "__main__":
     app.run(debug = True)
