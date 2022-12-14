@@ -6,6 +6,7 @@ import jwt
 import datetime
 from functools import wraps
 import bcrypt 
+from flask_cors import CORS
 
 def jwt_required(func):
     @wraps(func)
@@ -39,7 +40,7 @@ def admin_required(func):
     return admin_required_wrapper
             
 app = Flask(__name__)
-
+CORS(app)
 app.config['SECRET_KEY'] = 'b00785513'
 
 #establishing connections between webapp and mongodb
@@ -72,17 +73,16 @@ def show_all_businesses():
 
 #creating GET endpoint for our REST api
 @app.route("/api/v1.0/businesses/<string:id>", methods = ["GET"])
-@jwt_required
 def show_one_business(id):
     #validating whetehr business ID is valid
     if len(id) != 24 or not all(c in string.hexdigits for c in id):
         return make_response(jsonify({"error" : "Invalid Business ID"}), 404)
     business = businesses.find_one({"_id": ObjectId(id)}) #finding one business within the DB using mongodb commands
-    if business is not None: #if there is a business attached to that ID
-        business["_id"] = str(business["_id"]) #convert business ID to a string
-        for review in business["reviews"]: #showing reviews linked to that buisness
-            review["_id"] = str(review["_id"]) #convert review ID to a string
-        return make_response(jsonify( business ), 200) #good response
+    if business is not None: 
+        business["_id"] = str(business["_id"]) 
+        for review in business["reviews"]: 
+            review["_id"] = str(review["_id"]) 
+        return make_response(jsonify( [business] ), 200) 
     else:
         return make_response(jsonify({"error" : "Invalid Business ID"}), 404) #bad response
 
@@ -151,7 +151,6 @@ def delete_business(id):
         return make_response(jsonify({"error" : "Invalid business ID"}), 404)
     
 @app.route("/api/v1.0/businesses/<string:id>/reviews", methods = ["POST"])
-@jwt_required
 def add_new_review(id):
     #new_review defines schema used for review form data
     new_review = {
@@ -188,8 +187,6 @@ def fetch_all_reviews(id):
 @jwt_required
 def fetch_one_review(id, review_id):
     business = businesses.find_one(
-        #we specifcy we only want the review returned, and we add the positional opertator $ that says the
-        #review element we want is the one that matches the review ID in the find parameter
         { "reviews._id" : ObjectId(review_id) },
         {"_id" : 0, "reviews.$" : 1}
     )
@@ -222,7 +219,7 @@ def edit_review(id, review_id):
 @admin_required
 def delete_review(id, review_id):
     #we again update one business using the same ID found in the url
-    #pull command to pull from reviews collection the review with the corresponding ID found in the url
+    #to pull from reviews collection the review with the corresponding ID found in the url
     businesses.update_one(
         {"_id" : ObjectId(id)},
         {"$pull" : {"reviews" : { "_id" : ObjectId(review_id) } } }
