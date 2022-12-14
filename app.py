@@ -184,7 +184,7 @@ def fetch_all_reviews(id):
     return make_response( jsonify( data_to_return ), 200)
 
 @app.route("/api/v1.0/champions/<string:id>/reviews/<string:review_id>", methods = ["GET"])
-@jwt_required
+# @jwt_required
 def fetch_one_review(id, review_id):
     champion = champions.find_one(
         { "reviews._id" : ObjectId(review_id) },
@@ -197,7 +197,7 @@ def fetch_one_review(id, review_id):
         return make_response( jsonify(champion["reviews"][0]), 200)
     
 @app.route("/api/v1.0/champions/<string:id>/reviews/<string:review_id>", methods = ["PUT"])
-@jwt_required
+# @jwt_required
 def edit_review(id, review_id):
     #using $ positonal operator again as it poitns to the single review that matches the ID given, so we onyl update that one review
     edited_review = {
@@ -215,8 +215,8 @@ def edit_review(id, review_id):
     return make_response( jsonify({"url" : edit_review_url}), 200)
 
 @app.route("/api/v1.0/champions/<string:id>/reviews/<string:review_id>", methods = ["DELETE"])
-@jwt_required
-@admin_required
+# @jwt_required
+# @admin_required
 def delete_review(id, review_id):
     #we again update one champion using the same ID found in the url
     #to pull from reviews collection the review with the corresponding ID found in the url
